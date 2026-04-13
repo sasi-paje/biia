@@ -154,7 +154,7 @@ def detect_intent_and_query(user_message):
         count = get_items_count()
         return {"type": "count", "result": count}
 
-    if any(word in message_lower for word in ["somar", "soma", "total", "adição"]):
+    if any(word in message_lower for word in ["somar", "soma", "total", "adição", "inscricoes", "inscrição"]):
         stats = get_aggregated_stats()
         return {"type": "sum", "result": stats.get("sum_valor", 0)}
 

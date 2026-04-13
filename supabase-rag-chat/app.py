@@ -162,7 +162,7 @@ def build_partial_context_prompt(db_ctx):
     top = db_ctx.get("top", [])
 
     top_str = "\n".join([
-        f"- {r.get('item')}: R$ {r.get('metadata', {}).get('valor', 0):,.2f}"
+        f"- {r.get('item')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
         for r in top
     ]) if top else "Sem dados de valores disponíveis."
 
@@ -170,10 +170,10 @@ def build_partial_context_prompt(db_ctx):
 
 Contexto atual da base:
 - Total de registros: {total:,}
-- Média dos valores: R$ {stats.get('avg_valor', 0):,.2f}
-- Menor valor: R$ {stats.get('min_valor', 0):,.2f}
-- Maior valor: R$ {stats.get('max_valor', 0):,.2f}
-- Soma total: R$ {stats.get('sum_valor', 0):,.2f}
+- Média: {stats.get('avg_valor', 0):,.2f}
+- Menor valor: {stats.get('min_valor', 0):,.2f}
+- Maior valor: {stats.get('max_valor', 0):,.2f}
+- Soma total: {stats.get('sum_valor', 0):,.2f}
 
 Top 3 valores cadastrados:
 {top_str}
@@ -203,7 +203,7 @@ O banco de dados contém {result:,} registros no total."""
         return f"""{SCHEMA_SUMMARY}
 
 DADOS:
-A soma total dos valores na base é: R$ {result:,.2f}"""
+Total de inscrições: {result:,.0f}"""
 
     if intent_type == "average":
         return f"""{SCHEMA_SUMMARY}
@@ -213,7 +213,7 @@ A média dos valores na base é: R$ {result:,.2f}"""
 
     if intent_type in ["top_values", "min_values"]:
         items_str = "\n".join([
-            f"- {r.get('item', '')}: R$ {r.get('metadata', {}).get('valor', 0):,.2f}"
+            f"- {r.get('item', '')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
             for r in result
         ])
         label = "maiores" if intent_type == "top_values" else "menores"
@@ -225,7 +225,7 @@ Os {label} valores na base são:
 
     if intent_type in ["range", "category"]:
         items_str = "\n".join([
-            f"- {r.get('item', '')}: R$ {r.get('metadata', {}).get('valor', 0):,.2f}"
+            f"- {r.get('item', '')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
             for r in result
         ])
         return f"""{SCHEMA_SUMMARY}
@@ -254,7 +254,7 @@ Tente reformular ou pergunte sobre outro tema da base."""
         meta = row.get("metadata", {}) or {}
         valor = meta.get("valor")
 
-        valor_line = f"Valor: R$ {valor:,.2f}" if valor is not None else ""
+        valor_line = f"Valor: {valor:,.2f}" if valor is not None else ""
 
         extra_meta = " | ".join(f"{k}: {v}" for k, v in meta.items() if k != "valor")
 
@@ -301,9 +301,9 @@ def chat():
             
             if intent_data:
                 yield send_event({"type": "status", "message": f"Consulta otimizada detectada ({intent_data['type']})…"})
-                rows = intent_data.get("result", [])
-                system_prompt = build_system_prompt(None, intent_data)
+                system_prompt = build_system_prompt([], intent_data)
                 intent_type = intent_data.get("type")
+                rows = []
             else:
                 yield send_event({"type": "status", "message": "Buscando na base de conhecimento…"})
                 rows = search_hybrid_documents(last_user_message["content"])
@@ -346,7 +346,7 @@ def chat():
                             sim = f" · {r.get('similarity', 0) * 100:.0f}%" if r.get("similarity") is not None else ""
                             valor = r.get("metadata", {}).get("valor")
                             if valor is not None:
-                                label += f" (R$ {valor:,.2f})"
+                                label += f" ({valor:,.2f})"
                             sources.append(label + sim)
                         yield send_event({"type": "sources", "sources": sources})
                     yield send_event({"type": "done"})

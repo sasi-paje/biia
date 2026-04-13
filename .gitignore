@@ -1,6 +1,58 @@
-# Dependências
-node_modules/
-**/node_modules/
+# Ambientes virtuais Python
+venv/
+.venv/
+ENV/
+env/
+.env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Cython
+*.c
+*.pyx
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+ MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Translations
+*.mo
+*.pot
 
 # Variáveis de ambiente (segredos)
 .env
@@ -10,18 +62,6 @@ node_modules/
 # Logs
 logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Build / dist
-dist/
-build/
-.cache/
-
-# Modelos de ML baixados em cache pelo @xenova/transformers
-.cache/
-models/
 
 # Sistema operacional
 .DS_Store
@@ -32,6 +72,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*.swn
 
 # Cobertura de testes
 coverage/
@@ -39,3 +80,16 @@ coverage/
 # Arquivos temporários
 tmp/
 temp/
+
+# Arquivos temporários Python
+*.tmp
+*.bak
+*.swp
+~*
+
+# Node (mantido caso ainda use)
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
