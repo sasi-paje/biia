@@ -8,20 +8,20 @@ Interface de chat estilo ChatGPT que responde perguntas usando **RAG** (Retrieva
 
 ```
 Pergunta do usuário
-      │
-      ▼
-Gera embedding local (Xenova/all-MiniLM-L6-v2 · 384-dim)
-      │
-      ▼
+       │
+       ▼
+Gera embedding local (sentence-transformers/all-MiniLM-L6-v2 · 384-dim)
+       │
+       ▼
 Busca por similaridade no Supabase (pgvector · tabela biia)
-      │
-      ▼
+       │
+       ▼
 Monta system prompt com os top-5 resultados mais relevantes
-      │
-      ▼
+       │
+       ▼
 Chama OpenAI GPT (streaming via SSE)
-      │
-      ▼
+       │
+       ▼
 Exibe a resposta no chat em tempo real
 ```
 
@@ -35,8 +35,8 @@ supabase-rag-chat/
 │   └── index.html          # Frontend (ChatGPT-like UI)
 ├── supabase/
 │   └── match_biia.sql      # Função RPC pgvector (execute no Supabase)
-├── server.js               # Backend Express (RAG pipeline)
-├── package.json
+├── app.py                  # Backend Flask (RAG pipeline)
+├── requirements.txt        # Dependências Python
 ├── .env                    # Suas credenciais (não commitar!)
 ├── .env.example            # Template de variáveis de ambiente
 └── README.md
@@ -46,7 +46,7 @@ supabase-rag-chat/
 
 ## Pré-requisitos
 
-- **Node.js ≥ 18**
+- **Python ≥ 3.10**
 - Conta no [Supabase](https://supabase.com) com a tabela `biia` populada
 - Chave de API da [OpenAI](https://platform.openai.com/api-keys)
 - Conexão com a internet (para baixar o modelo de embedding na 1ª execução)
@@ -59,11 +59,13 @@ supabase-rag-chat/
 
 ```bash
 cd supabase-rag-chat
-npm install
+python -m venv venv
+source venv/bin/activate  # ou venv\Scripts\activate no Windows
+pip install -r requirements.txt
 ```
 
-> Na primeira execução, o `@xenova/transformers` baixará o modelo
-> `Xenova/all-MiniLM-L6-v2` (~90 MB) e fará cache local em `~/.cache/`.
+> Na primeira execução, o `sentence-transformers` baixará o modelo
+> `sentence-transformers/all-MiniLM-L6-v2` (~90 MB) e fará cache local em `~/.cache`.
 
 ---
 
@@ -101,9 +103,9 @@ Isso cria a função `match_biia(query_embedding, match_count)` que realiza a bu
 ### 4. Rode o servidor
 
 ```bash
-npm run dev      # desenvolvimento (auto-reload com nodemon)
-# ou
-npm start        # produção
+python app.py
+# ou em modo desenvolvimento:
+flask run --host=0.0.0.0 --port=3000 --debug
 ```
 
 Abra no navegador: **http://localhost:3000**
@@ -123,11 +125,7 @@ Abra no navegador: **http://localhost:3000**
 ## Modelo de embedding
 
 A tabela usa vetores de **384 dimensões**, gerados pelo modelo
-`sentence-transformers/all-MiniLM-L6-v2` (via `Xenova/all-MiniLM-L6-v2` no Node.js).
-
-> Se os seus embeddings foram gerados com outro modelo, altere `EMBEDDING_MODEL` no `.env`
-> para o modelo equivalente do Xenova/Transformers.js.
-> [Lista de modelos disponíveis](https://huggingface.co/Xenova)
+`sentence-transformers/all-MiniLM-L6-v2` (via `sentence-transformers` no Python).
 
 ---
 
@@ -138,32 +136,31 @@ O projeto usa OpenAI por padrão. Para trocar:
 ### Groq (muito mais rápido, modelos open-source)
 
 ```bash
-npm install groq-sdk
+pip install groq
 ```
 
-Em `server.js`, substitua o cliente OpenAI:
+Em `app.py`, substitua o cliente OpenAI:
 
-```js
-import Groq from 'groq-sdk';
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-// Use groq.chat.completions.create({ ... }) — mesma API
+```python
+from groq import Groq
+groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Use groq.chat.completions.create({ ... }) — mesma API
 ```
 
 ### Anthropic (Claude)
 
 ```bash
-npm install @anthropic-ai/sdk
+pip install anthropic
 ```
 
 ### Grok (xAI)
 
-O Grok usa a mesma interface da OpenAI, bastando trocar a `baseURL`:
-
-```js
-const openai = new OpenAI({
-  apiKey: process.env.GROK_API_KEY,
-  baseURL: 'https://api.x.ai/v1',
-});
+```python
+from openai import OpenAI
+client = OpenAI(
+    api_key=os.getenv("GROK_API_KEY"),
+    base_url="https://api.x.ai/v1",
+)
 ```
 
 ---
@@ -175,11 +172,12 @@ const openai = new OpenAI({
 | `SUPABASE_URL` | — | URL do projeto Supabase |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Chave service_role (backend only) |
 | `OPENAI_API_KEY` | — | Chave da API OpenAI |
-| `EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | Modelo de embedding local |
+| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Modelo de embedding local |
 | `CHAT_MODEL` | `gpt-4o-mini` | Modelo LLM para a resposta |
 | `RPC_FUNCTION` | `match_biia` | Nome da função RPC no Supabase |
-| `MATCH_COUNT` | `5` | Top-K resultados da busca vetorial |
-| `PORT` | `3000` | Porta do servidor Express |
+| `MATCH_COUNT` | `10` | Top-K resultados da busca vetorial |
+| `SIMILARITY_THRESHOLD` | `0.0` | Score mínimo de similaridade |
+| `PORT` | `3000` | Porta do servidor Flask |
 
 ---
 
