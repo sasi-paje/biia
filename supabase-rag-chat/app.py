@@ -124,7 +124,44 @@ def search_hybrid_documents(user_query, limit=None):
 
     print("🔍  Keyword search empty, falling back to vector search...")
     embedding = generate_embedding(user_query)
-    return search_similar_documents(embedding, {})
+    vector_results = search_similar_documents(embedding, {})
+
+    if not vector_results:
+        print("🔍  Vector search empty, trying category fallback...")
+        category_fallback = search_by_category_fallback(user_query)
+        if category_fallback:
+            print(f"🔍  Category fallback returned {len(category_fallback)} result(s)")
+            return category_fallback
+
+    return vector_results
+
+
+def search_by_category_fallback(query, limit=20):
+    words = query.lower().split()
+    keywords = [w for w in words if len(w) > 3 and w not in ["para", "qual", "qual", "mais", "sobre", "como", "porque", "quanto", "quais", "esse", "essa", "este", "esta"]]
+    if not keywords:
+        keywords = words[-2:] if len(words) >= 2 else words
+    try:
+        client = get_client()
+        response = client.table("biia").select("id, item, metadata").execute()
+        if not response or not response.data:
+            return []
+        results = []
+        for row in response.data:
+            item_lower = (row.get("item") or "").lower()
+            for kw in keywords:
+                if kw in item_lower:
+                    results.append({
+                        "id": row["id"],
+                        "item": row["item"],
+                        "metadata": row.get("metadata"),
+                        "similarity": 1.0
+                    })
+                    break
+        return results[:limit]
+    except Exception as e:
+        print(f"Error in category fallback: {e}")
+        return []
 
 
 SCHEMA_SUMMARY = """Base de dados: tabela 'biia' com estrutura:

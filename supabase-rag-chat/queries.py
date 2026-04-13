@@ -1,26 +1,6 @@
 from db import get_client
 
 
-def get_all_items(limit=100, offset=0):
-    try:
-        client = get_client()
-        response = client.table("biia").select("id, item, metadata, created_at").range(offset, offset + limit - 1).execute()
-        return response.data if response and response.data else []
-    except Exception as e:
-        print(f"Error in get_all_items: {e}")
-        return []
-
-
-def get_items_by_category(category_pattern, limit=10):
-    try:
-        client = get_client()
-        response = client.table("biia").select("id, item, metadata").ilike("item", f"%{category_pattern}%").limit(limit).execute()
-        return response.data if response and response.data else []
-    except Exception as e:
-        print(f"Error in get_items_by_category: {e}")
-        return []
-
-
 def get_items_by_valor_range(min_valor, max_valor, limit=10):
     try:
         client = get_client()
@@ -147,6 +127,50 @@ def get_aggregated_stats():
         return {"total_items": 0, "avg_valor": 0, "min_valor": 0, "max_valor": 0, "sum_valor": 0}
 
 
+def get_all_items(limit=100, offset=0):
+    try:
+        client = get_client()
+        response = client.table("biia").select("id, item, metadata").range(offset, offset + limit - 1).execute()
+        return response.data if response and response.data else []
+    except Exception as e:
+        print(f"Error in get_all_items: {e}")
+        return []
+
+
+def get_items_by_category(category_pattern, limit=50):
+    try:
+        client = get_client()
+        pattern_lower = category_pattern.lower().strip()
+        response = client.table("biia").select("id, item, metadata").execute()
+        if not response or not response.data:
+            return []
+        matched = []
+        for row in response.data:
+            item_text = (row.get("item") or "").lower()
+            if pattern_lower in item_text:
+                matched.append(row)
+                if len(matched) >= limit:
+                    break
+        return matched
+    except Exception as e:
+        print(f"Error in get_items_by_category: {e}")
+        return []
+
+
+def find_best_matching_item(user_query, items):
+    user_lower = user_query.lower()
+    best_match = None
+    best_score = 0
+    for item in items:
+        item_text = (item.get("item") or "").lower()
+        words = user_lower.split()
+        matches = sum(1 for w in words if len(w) > 2 and w in item_text)
+        if matches > best_score:
+            best_score = matches
+            best_match = item.get("item")
+    return best_match
+
+
 def detect_intent_and_query(user_message):
     message_lower = user_message.lower()
 
@@ -154,7 +178,10 @@ def detect_intent_and_query(user_message):
         stats = get_aggregated_stats()
         return {"type": "sum", "result": stats.get("sum_valor", 0)}
 
-    if any(word in message_lower for word in ["quantos", "quantidade", "contar", "total de", "quantos são"]):
+    if any(word in message_lower for word in ["quantas", "quantos", "quantidade", "contar", "total de", "quantas são", "quantos são", "qual a quantidade", "qual o total"]):
+        if any(word in message_lower for word in ["inscric", "registro", "cadastro", "item"]):
+            stats = get_aggregated_stats()
+            return {"type": "sum", "result": stats.get("sum_valor", 0)}
         count = get_items_count()
         return {"type": "count", "result": count}
 
@@ -186,16 +213,12 @@ def detect_intent_and_query(user_message):
             items = get_items_by_valor_range(min_val, max_val)
             return {"type": "range", "result": items}
 
-    if any(word in message_lower for word in ["categoria", "tipo", "grupo", "área", "situação", "situacao"]):
-        import re
-        pattern = re.search(r'(?:categoria|tipo|grupo|área|situação|situacao)\s+(?:de|do)?\s*(.+)', message_lower)
-        if pattern:
-            category = pattern.group(1).strip()
-            items = get_items_by_category(category)
-            return {"type": "category", "result": items}
-
-        if "situação de rua" in message_lower or "situacao de rua" in message_lower:
-            items = get_items_by_category("situação de rua")
-            return {"type": "category", "result": items}
+    all_items = get_all_items()
+    if all_items:
+        matched_item = find_best_matching_item(user_message, all_items)
+        if matched_item:
+            items = get_items_by_category(matched_item)
+            if items:
+                return {"type": "category", "result": items, "matched_item": matched_item}
 
     return None
