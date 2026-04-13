@@ -129,14 +129,16 @@ def search_hybrid_documents(user_query, limit=None):
 
 SCHEMA_SUMMARY = """Base de dados: tabela 'biia' com estrutura:
 - id (bigint): identificador único
-- item (text): texto descritivo/categoria do registro
-- metadata (jsonb): dados extras em formato JSON, pode conter: valor (float/número), categoria (text), e outros campos
+- item (text): texto descritivo/categoria do registro (ex: "Em Situação de Rua", "Deficiente", etc)
+- metadata (jsonb): dados extras em formato JSON, pode conter: valor (float/número de inscrições), e outros campos
 - vetorizada (vector 384): vetor de embeddings para busca semântica
 - created_at (timestamptz): data de criação
 
 Instruções sobre a base:
 - Responda sempre com base nos dados fornecidos no contexto.
-- Formate valores monetários como R$ X.XXX,XX
+- Formate valores numéricos com separador de milhares: X.XXX
+- O campo 'item' contém a categoria (ex: condição de moradia, situação de rua, etc)
+- O campo 'metadata.valor' contém a quantidade de inscrições
 - Seja direto e preciso em todas as respostas.
 - Se não houver dados suficientes para responder, diga o que você tem disponível."""
 
@@ -209,7 +211,7 @@ Total de inscrições: {result:,.0f}"""
         return f"""{SCHEMA_SUMMARY}
 
 DADOS:
-A média dos valores na base é: R$ {result:,.2f}"""
+A média dos valores na base é: {result:,.2f}"""
 
     if intent_type in ["top_values", "min_values"]:
         items_str = "\n".join([

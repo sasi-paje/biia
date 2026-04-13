@@ -150,11 +150,15 @@ def get_aggregated_stats():
 def detect_intent_and_query(user_message):
     message_lower = user_message.lower()
 
+    if any(phrase in message_lower for phrase in ["quantidade total", "total de inscric", "total inscric", "soma total", "somar todas"]):
+        stats = get_aggregated_stats()
+        return {"type": "sum", "result": stats.get("sum_valor", 0)}
+
     if any(word in message_lower for word in ["quantos", "quantidade", "contar", "total de", "quantos são"]):
         count = get_items_count()
         return {"type": "count", "result": count}
 
-    if any(word in message_lower for word in ["somar", "soma", "total", "adição", "inscricoes", "inscrição"]):
+    if any(word in message_lower for word in ["somar", "soma", "adição"]):
         stats = get_aggregated_stats()
         return {"type": "sum", "result": stats.get("sum_valor", 0)}
 
@@ -182,12 +186,16 @@ def detect_intent_and_query(user_message):
             items = get_items_by_valor_range(min_val, max_val)
             return {"type": "range", "result": items}
 
-    if any(word in message_lower for word in ["categoria", "tipo", "grupo", "área"]):
+    if any(word in message_lower for word in ["categoria", "tipo", "grupo", "área", "situação", "situacao"]):
         import re
-        pattern = re.search(r'(?:categoria|tipo|grupo|área)\s+(?:de|do)?\s*(.+)', message_lower)
+        pattern = re.search(r'(?:categoria|tipo|grupo|área|situação|situacao)\s+(?:de|do)?\s*(.+)', message_lower)
         if pattern:
             category = pattern.group(1).strip()
             items = get_items_by_category(category)
+            return {"type": "category", "result": items}
+
+        if "situação de rua" in message_lower or "situacao de rua" in message_lower:
+            items = get_items_by_category("situação de rua")
             return {"type": "category", "result": items}
 
     return None
