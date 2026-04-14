@@ -1,16 +1,15 @@
 """
 supabase-rag-chat — Backend Server (Python/Flask)
 
-Full RAG pipeline with optimized queries:
-  1. Receives the user's question
-  2. Detects user intent and tries optimized SQL queries first
-  3. Falls back to vector similarity search via RAG
-  4. Streams the LLM response back via Server-Sent Events (SSE)
+RAG pipeline simplificado:
+  1. Recebe a pergunta do usuário
+  2. Gera embedding da pergunta
+  3. Busca documentos similares via vector search
+  4. Retorna o resultado ao LLM para gerar resposta
 """
 
 import os
 import json
-import re
 from dotenv import load_dotenv
 from flask import Flask, request, Response
 from flask_cors import CORS
@@ -18,7 +17,6 @@ from supabase import create_client
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 
-from db import get_client
 import queries
 
 load_dotenv()
@@ -34,8 +32,6 @@ CONFIG = {
     "rpc_function_name": os.getenv("RPC_FUNCTION", "match_biia"),
     "match_count": int(os.getenv("MATCH_COUNT", "10")),
     "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", "0.0")),
-    "max_context_tokens": 10000,
-    "hybrid_match_count": 20,
 }
 
 for key in ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "OPENAI_API_KEY"]:
@@ -84,84 +80,105 @@ def search_similar_documents(embedding, filter=None):
         print("Supabase RPC error:", e)
         raise RuntimeError(f"Vector search failed: {str(e)}")
 
-    print(f"🔍  RPC returned {len(data or [])} result(s) (threshold: {CONFIG['similarity_threshold']})")
-    if data and len(data) > 0:
-        for i, r in enumerate(data):
-            print(f"   [{i+1}] similarity={r.get('similarity', 0):.4f}  item=\"{str(r.get('item', ''))[:60]}\"")
-    else:
-        raw_result = supabase.rpc(
-            CONFIG["rpc_function_name"],
-            {
-                "query_embedding": embedding,
-                "match_count": 5,
-                "similarity_threshold": 0.0,
-                "filter": {},
-            }
-        ).execute()
-        raw = raw_result.data
-        if raw and len(raw) > 0:
-            print("   ⚠️  Results with threshold=0 (for diagnosis):")
-            for i, r in enumerate(raw):
-                print(f"   [{i+1}] similarity={r.get('similarity', 0):.4f}  item=\"{str(r.get('item', ''))[:60]}\"")
-            print(f"   ➡️  Consider lowering SIMILARITY_THRESHOLD in .env (current: {CONFIG['similarity_threshold']})")
-        else:
-            print("   ❌  No results even with threshold=0 — check data in public.biia table")
-
     return data or []
 
 
-def search_hybrid_documents(user_query, limit=None):
-    if limit is None:
-        limit = CONFIG["hybrid_match_count"]
+def search_by_keyword(user_query, limit=20):
+    query_lower = user_query.lower()
+    query_words = [w for w in query_lower.split() if len(w) > 2]
 
-    keyword_results = queries.search_hybrid(user_query, limit=limit)
-
-    if keyword_results:
-        print(f"🔍  Keyword search returned {len(keyword_results)} result(s)")
-        for i, r in enumerate(keyword_results):
-            print(f"   [{i+1}] keyword match  item=\"{str(r.get('item', ''))[:60]}\"")
-        return keyword_results
-
-    print("🔍  Keyword search empty, falling back to vector search...")
-    embedding = generate_embedding(user_query)
-    vector_results = search_similar_documents(embedding, {})
-
-    if not vector_results:
-        print("🔍  Vector search empty, trying category fallback...")
-        category_fallback = search_by_category_fallback(user_query)
-        if category_fallback:
-            print(f"🔍  Category fallback returned {len(category_fallback)} result(s)")
-            return category_fallback
-
-    return vector_results
-
-
-def search_by_category_fallback(query, limit=20):
-    words = query.lower().split()
-    keywords = [w for w in words if len(w) > 3 and w not in ["para", "qual", "qual", "mais", "sobre", "como", "porque", "quanto", "quais", "esse", "essa", "este", "esta"]]
-    if not keywords:
-        keywords = words[-2:] if len(words) >= 2 else words
     try:
-        client = get_client()
-        response = client.table("biia").select("id, item, metadata").execute()
+        response = supabase.table("biia").select("id, item, metadata").execute()
         if not response or not response.data:
             return []
+
         results = []
         for row in response.data:
-            item_lower = (row.get("item") or "").lower()
-            for kw in keywords:
-                if kw in item_lower:
-                    results.append({
-                        "id": row["id"],
-                        "item": row["item"],
-                        "metadata": row.get("metadata"),
-                        "similarity": 1.0
-                    })
-                    break
+            item_text = (row.get("item") or "").lower()
+            score = 0
+            for word in query_words:
+                if word in item_text:
+                    score += 1
+
+            if score > 0:
+                results.append({
+                    "id": row["id"],
+                    "item": row["item"],
+                    "metadata": row.get("metadata"),
+                    "similarity": score / len(query_words),
+                    "match_type": "keyword"
+                })
+
+        results.sort(key=lambda x: x["similarity"], reverse=True)
         return results[:limit]
     except Exception as e:
-        print(f"Error in category fallback: {e}")
+        print(f"Keyword search error: {e}")
         return []
+
+
+def search_hybrid(user_query):
+    print(f"\n📝 Busca híbrida para: '{user_query}'")
+
+    print("🔍 Executando busca semântica...")
+    embedding = generate_embedding(user_query)
+    semantic_results = search_similar_documents(embedding, {})
+
+    if semantic_results and len(semantic_results) > 0:
+        best_sim = semantic_results[0].get("similarity", 0)
+        print(f"   Semântica: {len(semantic_results)} resultados, melhor similaridade: {best_sim:.4f}")
+        for i, r in enumerate(semantic_results[:3]):
+            print(f"   [{i+1}] sim={r.get('similarity', 0):.4f} → \"{str(r.get('item', ''))[:50]}\"")
+
+    print("🔍 Executando busca por palavras-chave...")
+    keyword_results = search_by_keyword(user_query)
+
+    if keyword_results and len(keyword_results) > 0:
+        best_kw = keyword_results[0].get("similarity", 0)
+        print(f"   Keywords: {len(keyword_results)} resultados, melhor score: {best_kw:.4f}")
+        for i, r in enumerate(keyword_results[:3]):
+            print(f"   [{i+1}] score={r.get('similarity', 0):.4f} → \"{str(r.get('item', ''))[:50]}\"")
+
+    all_results = {}
+
+    if semantic_results:
+        for r in semantic_results:
+            key = r.get("item", "")
+            if key not in all_results:
+                all_results[key] = {
+                    "id": r["id"],
+                    "item": r["item"],
+                    "metadata": r.get("metadata"),
+                    "similarity": r.get("similarity", 0),
+                    "match_types": ["semantic"]
+                }
+            else:
+                all_results[key]["match_types"].append("semantic")
+
+    if keyword_results:
+        for r in keyword_results:
+            key = r.get("item", "")
+            if key in all_results:
+                all_results[key]["similarity"] = max(all_results[key]["similarity"], r.get("similarity", 0))
+                all_results[key]["match_types"].append("keyword")
+            else:
+                all_results[key] = {
+                    "id": r["id"],
+                    "item": r["item"],
+                    "metadata": r.get("metadata"),
+                    "similarity": r.get("similarity", 0),
+                    "match_types": ["keyword"]
+                }
+
+    results = list(all_results.values())
+    results.sort(key=lambda x: x["similarity"], reverse=True)
+
+    print(f"\n✅ Total de resultados únicos: {len(results)}")
+    print("📊 Ranking final:")
+    for i, r in enumerate(results[:5]):
+        match_types = ", ".join(r.get("match_types", []))
+        print(f"   [{i+1}] sim={r.get('similarity', 0):.4f} [{match_types}] → \"{str(r.get('item', ''))[:50]}\"")
+
+    return results[:CONFIG["match_count"]]
 
 
 SCHEMA_SUMMARY = """Base de dados: tabela 'biia' com estrutura:
@@ -180,149 +197,8 @@ Instruções sobre a base:
 - Se não houver dados suficientes para responder, diga o que você tem disponível."""
 
 
-def get_db_context_summary():
-    try:
-        total = queries.get_items_count()
-        stats = queries.get_aggregated_stats()
-        top = queries.get_top_values(limit=3)
-        return {
-            "total": total,
-            "stats": stats,
-            "top": top,
-        }
-    except Exception as e:
-        print(f"⚠️  Could not fetch DB context: {e}")
-        return None
-
-
-def build_partial_context_prompt(db_ctx):
-    total = db_ctx.get("total", 0)
-    stats = db_ctx.get("stats", {})
-    top = db_ctx.get("top", [])
-
-    top_str = "\n".join([
-        f"- {r.get('item')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
-        for r in top
-    ]) if top else "Sem dados de valores disponíveis."
-
-    return f"""{SCHEMA_SUMMARY}
-
-Contexto atual da base:
-- Total de registros: {total:,}
-- Média: {stats.get('avg_valor', 0):,.2f}
-- Menor valor: {stats.get('min_valor', 0):,.2f}
-- Maior valor: {stats.get('max_valor', 0):,.2f}
-- Soma total: {stats.get('sum_valor', 0):,.2f}
-
-Top 3 valores cadastrados:
-{top_str}
-
-Você tem acesso parcial à base de dados. Se o usuário perguntar sobre algo
-que não esteja nos dados acima, informe que você só consegue responder
-sobre informações disponíveis na base BIIA."""
-
-
-def build_system_prompt(rows, intent_data=None):
-    if intent_data:
-        return build_intent_prompt(intent_data)
-    return build_rag_prompt(rows)
-
-
-def build_intent_prompt(intent_data):
-    intent_type = intent_data.get("type")
-    result = intent_data.get("result")
-
-    if intent_type == "count":
-        return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-O banco de dados contém {result:,} registros no total."""
-
-    if intent_type == "sum":
-        return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-Total de inscrições: {result:,.0f}"""
-
-    if intent_type == "average":
-        return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-A média dos valores na base é: {result:,.2f}"""
-
-    if intent_type == "aggregate":
-        query_result = intent_data.get("query_result", [])
-        if query_result and len(query_result) > 0:
-            result_value = query_result[0].get("result", 0)
-            table = intent_data.get("table", "desconhecida")
-            operation = intent_data.get("operation", "resultado")
-            col = intent_data.get("column", "")
-            return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-Tabela consultada: {table}
-Operação: {operation.upper()} da coluna {col}
-Resultado: {result_value:,.2f}"""
-        return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-Não foi possível obter o resultado da consulta."""
-
-    if intent_type in ["top_values", "min_values"]:
-        items_str = "\n".join([
-            f"- {r.get('item', '')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
-            for r in result
-        ])
-        label = "maiores" if intent_type == "top_values" else "menores"
-        return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-Os {label} valores na base são:
-{items_str}"""
-
-    if intent_type in ["range", "category"]:
-        items_str = "\n".join([
-            f"- {r.get('item', '')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
-            for r in result
-        ])
-        return f"""{SCHEMA_SUMMARY}
-
-DADOS:
-Resultados encontrados:
-{items_str}"""
-
-    if intent_type == "search_by_value":
-        search_result = intent_data.get("result", [])
-        table = intent_data.get("table", "desconhecida")
-        search_col = intent_data.get("column", "")
-        search_val = intent_data.get("value", "")
-        if search_result and len(search_result) > 0:
-            rows_info = []
-            for r in search_result:
-                row_str = ", ".join([f"{k}: {v}" for k, v in r.items() if k not in ["id", "created_at"]])
-                rows_info.append(row_str)
-            results_str = "\n".join([f"- {info}" for info in rows_info])
-            return f"""{SCHEMA_SUMMARY}
-
-RESULTADO DA BUSCA:
-Valor procurado: {search_val}
-Tabela: {table}
-Coluna: {search_col}
-
-Registros encontrados:
-{results_str}"""
-        return f"""{SCHEMA_SUMMARY}
-
-Não foram encontrados registros para o valor '{search_val}'."""
-
-    return build_rag_prompt([])
-
-
 def build_rag_prompt(rows):
     if len(rows) == 0:
-        db_ctx = get_db_context_summary()
-        if db_ctx:
-            return build_partial_context_prompt(db_ctx)
         return f"""{SCHEMA_SUMMARY}
 
 A busca não retornou resultados específicos para esta pergunta.
@@ -376,33 +252,11 @@ def chat():
 
     def generate():
         try:
-            yield send_event({"type": "status", "message": "Analisando sua pergunta…"})
-            
-            intent_data = queries.detect_intent_and_query(last_user_message["content"])
-            
-            if intent_data:
-                yield send_event({"type": "status", "message": f"Consulta otimizada detectada ({intent_data['type']})…"})
-                intent_type = intent_data.get("type")
-                rows = []
-                
-                if intent_type in ["aggregate", "select"]:
-                    query = intent_data.get("query")
-                    if query:
-                        raw_result = queries.execute_custom_query(query)
-                        if raw_result:
-                            if intent_type == "aggregate":
-                                result_value = raw_result[0].get("result") if raw_result else 0
-                                intent_data["query_result"] = raw_result
-                                rows = [{"item": f"Resultado da consulta", "metadata": {"valor": result_value}}]
-                            else:
-                                rows = raw_result
-                
-                system_prompt = build_system_prompt(rows, intent_data)
-            else:
-                yield send_event({"type": "status", "message": "Buscando na base de conhecimento…"})
-                rows = search_hybrid_documents(last_user_message["content"])
-                system_prompt = build_system_prompt(rows)
-                intent_type = None
+            print(f"\n💬 Pergunta do usuário: {last_user_message['content']}")
+            yield send_event({"type": "status", "message": "Buscando na base de conhecimento…"})
+
+            rows = search_hybrid(last_user_message["content"])
+            system_prompt = build_rag_prompt(rows)
 
             found_msg = f"Encontrei {len(rows) if rows else 0} resultado(s). Gerando resposta…"
             yield send_event({"type": "status", "message": found_msg})
@@ -421,28 +275,14 @@ def chat():
                 max_tokens=2048,
             )
 
-            accumulated_text = ""
             for chunk in stream:
                 token = chunk.choices[0].delta.content
                 finish_reason = chunk.choices[0].finish_reason
 
                 if token:
-                    accumulated_text += token
                     yield send_event({"type": "token", "content": token})
 
                 if finish_reason == "stop":
-                    if rows and intent_type:
-                        sources = []
-                        for r in rows:
-                            label = r.get("item", "resultado sem texto")
-                            if len(label) > 80:
-                                label = label[:77] + "…"
-                            sim = f" · {r.get('similarity', 0) * 100:.0f}%" if r.get("similarity") is not None else ""
-                            valor = r.get("metadata", {}).get("valor")
-                            if valor is not None:
-                                label += f" ({valor:,.2f})"
-                            sources.append(label + sim)
-                        yield send_event({"type": "sources", "sources": sources})
                     yield send_event({"type": "done"})
 
         except Exception as err:
