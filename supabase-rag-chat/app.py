@@ -250,6 +250,24 @@ Total de inscrições: {result:,.0f}"""
 DADOS:
 A média dos valores na base é: {result:,.2f}"""
 
+    if intent_type == "aggregate":
+        query_result = intent_data.get("query_result", [])
+        if query_result and len(query_result) > 0:
+            result_value = query_result[0].get("result", 0)
+            table = intent_data.get("table", "desconhecida")
+            operation = intent_data.get("operation", "resultado")
+            col = intent_data.get("column", "")
+            return f"""{SCHEMA_SUMMARY}
+
+DADOS:
+Tabela consultada: {table}
+Operação: {operation.upper()} da coluna {col}
+Resultado: {result_value:,.2f}"""
+        return f"""{SCHEMA_SUMMARY}
+
+DADOS:
+Não foi possível obter o resultado da consulta."""
+
     if intent_type in ["top_values", "min_values"]:
         items_str = "\n".join([
             f"- {r.get('item', '')}: {r.get('metadata', {}).get('valor', 0):,.2f}"
@@ -272,6 +290,30 @@ Os {label} valores na base são:
 DADOS:
 Resultados encontrados:
 {items_str}"""
+
+    if intent_type == "search_by_value":
+        search_result = intent_data.get("result", [])
+        table = intent_data.get("table", "desconhecida")
+        search_col = intent_data.get("column", "")
+        search_val = intent_data.get("value", "")
+        if search_result and len(search_result) > 0:
+            rows_info = []
+            for r in search_result:
+                row_str = ", ".join([f"{k}: {v}" for k, v in r.items() if k not in ["id", "created_at"]])
+                rows_info.append(row_str)
+            results_str = "\n".join([f"- {info}" for info in rows_info])
+            return f"""{SCHEMA_SUMMARY}
+
+RESULTADO DA BUSCA:
+Valor procurado: {search_val}
+Tabela: {table}
+Coluna: {search_col}
+
+Registros encontrados:
+{results_str}"""
+        return f"""{SCHEMA_SUMMARY}
+
+Não foram encontrados registros para o valor '{search_val}'."""
 
     return build_rag_prompt([])
 
@@ -340,9 +382,22 @@ def chat():
             
             if intent_data:
                 yield send_event({"type": "status", "message": f"Consulta otimizada detectada ({intent_data['type']})…"})
-                system_prompt = build_system_prompt([], intent_data)
                 intent_type = intent_data.get("type")
                 rows = []
+                
+                if intent_type in ["aggregate", "select"]:
+                    query = intent_data.get("query")
+                    if query:
+                        raw_result = queries.execute_custom_query(query)
+                        if raw_result:
+                            if intent_type == "aggregate":
+                                result_value = raw_result[0].get("result") if raw_result else 0
+                                intent_data["query_result"] = raw_result
+                                rows = [{"item": f"Resultado da consulta", "metadata": {"valor": result_value}}]
+                            else:
+                                rows = raw_result
+                
+                system_prompt = build_system_prompt(rows, intent_data)
             else:
                 yield send_event({"type": "status", "message": "Buscando na base de conhecimento…"})
                 rows = search_hybrid_documents(last_user_message["content"])
